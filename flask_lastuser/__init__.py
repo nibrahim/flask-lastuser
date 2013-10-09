@@ -9,6 +9,7 @@ import urllib
 import re
 import weakref
 from coaster.views import get_current_url, get_next_url
+from coaster import newsecret
 
 from flask import session, g, redirect, url_for, request, flash, abort, Response, jsonify
 
@@ -134,6 +135,7 @@ class Lastuser(object):
         self._login_handler = None
         self._redirect_uri_name = None
         self._auth_error_handler = None
+        self._auth_handler = None
         self.usermanager = None
 
         self.lastuser_server = None
@@ -161,6 +163,8 @@ class Lastuser(object):
         self.getorgteams_endpoint = app.config.get('LASTUSER_ENDPOINT_GETORGTEAMS', 'api/1/org/get_teams')
         self.client_id = app.config['LASTUSER_CLIENT_ID']
         self.client_secret = app.config['LASTUSER_CLIENT_SECRET']
+        self.lastuser_test = app.config.get('LASTUSER_TEST', False)
+        self.lastuser_test_user = app.config.get('LASTUSER_TEST_USER', '')
 
         # Register known external resources provided by Lastuser itself
         self.external_resource('id', urlparse.urljoin(self.lastuser_server, 'api/1/id'), 'GET')
@@ -316,14 +320,28 @@ class Lastuser(object):
                 next=next, _external=True)
         # Discard currently logged in user
         session.pop('lastuser_userid', None)
-        return redirect('%s?%s' % (urlparse.urljoin(self.lastuser_server, self.auth_endpoint),
-            urllib.urlencode({
-                'response_type': 'code',
-                'client_id': self.client_id,
-                'redirect_uri': session['lastuser_redirect_uri'],
-                'scope': scope,
-                'state': session['lastuser_state'],
-            })))
+        redirect_url = ('%s?%s' % (urlparse.urljoin(self.lastuser_server, self.auth_endpoint),
+                                   urllib.urlencode({
+                                       'response_type': 'code',
+                                       'client_id': self.client_id,
+                                       'redirect_uri': session['lastuser_redirect_uri'],
+                                       'scope': scope,
+                                       'state': session['lastuser_state'],
+                                   })))
+        print  "HERE ", 
+        if self.lastuser_test:
+            # Call the auth handler directly without going to the
+            # actual lastuser instance
+            print "TEST mode. Not going to actual lastuser instance"
+            code = newsecret()
+            print "New secret is %s"%code
+            redirect_url = "%s&%s"% (url_for(self._redirect_uri_name, next=next, _external=True),
+                                     urllib.urlencode({'state' : session['lastuser_state'],
+                                                       'code'  : newsecret(),
+                                                       'next'  : next
+                                     }))
+        print redirect_url
+        return redirect(redirect_url)
 
     def logout_handler(self, f):
         """
@@ -349,12 +367,14 @@ class Lastuser(object):
         """
         @wraps(f)
         def decorated_function(*args, **kw):
+            # import pdb; pdb.set_trace()
             # Step 1: Validations
             # Validation 1: Check if there is an error handler
             if not self._auth_error_handler:
                 raise LastuserConfigException("No authorization error handler")
             # Validation 2: Check for CSRF attacks
             state = request.args.get('state')
+            print "State is %s"%state
             if state is None or state != session.get('lastuser_state'):
                 return self._auth_error_handler(error='csrf_invalid')
             session.pop('lastuser_state', None)
@@ -371,13 +391,28 @@ class Lastuser(object):
             # Validations done
 
             # Step 2: Get the auth token
-            r = requests.post(urlparse.urljoin(self.lastuser_server, self.token_endpoint),
-                auth=(self.client_id, self.client_secret),
-                data={'code': code,
-                      'redirect_uri': session.get('lastuser_redirect_uri'),
-                      'grant_type': 'authorization_code',
-                      'scope': self._login_handler().get('scope', '')})
-            result = r.json() if callable(r.json) else r.json
+            if self.lastuser_test:
+                result = {u'access_token': u'pAfGGWHzRtqRmdSQ_CdrWA',
+                          u'scope': u'email id',
+                          u'token_type': u'bearer',
+                          u'userinfo': {u'email': u'noufal@gmail.com',
+                                        u'fullname': u'Noufal Ibrahim',
+                                        u'oldids': [],
+                                        u'timezone': u'Asia/Kolkata',
+                                        u'userid': u'cJTSsgctQlGWXiy7Ot9bbQ',
+                                        u'username': u'noufal'}}
+            else:
+                post_url = urlparse.urljoin(self.lastuser_server, self.token_endpoint)
+                print "   *** ",post_url
+                r = requests.post(post_url,
+                                  auth=(self.client_id, self.client_secret),
+                                  data={'code': code,
+                                        'redirect_uri': session.get('lastuser_redirect_uri'),
+                                        'grant_type': 'authorization_code',
+                                        'scope': self._login_handler().get('scope', '')})
+
+                result = r.json() if callable(r.json) else r.json
+
 
             # Step 2.1: Remove temporary session variables
             session.pop('lastuser_redirect_uri', None)
@@ -408,6 +443,7 @@ class Lastuser(object):
             # Step 4.5: Connect to auth handler in user code
             return f(*args, **kw)
         self._redirect_uri_name = f.__name__
+        self._auth_handler = decorated_function
         return decorated_function
 
     def auth_error_handler(self, f):
