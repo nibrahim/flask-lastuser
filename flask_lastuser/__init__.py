@@ -161,6 +161,7 @@ class Lastuser(object):
         self.getorgteams_endpoint = app.config.get('LASTUSER_ENDPOINT_GETORGTEAMS', 'api/1/org/get_teams')
         self.client_id = app.config['LASTUSER_CLIENT_ID']
         self.client_secret = app.config['LASTUSER_CLIENT_SECRET']
+        self.test_mode = app.config['LASTUSER_TEST']
 
         # Register known external resources provided by Lastuser itself
         self.external_resource('id', urlparse.urljoin(self.lastuser_server, 'api/1/id'), 'GET')
@@ -194,6 +195,23 @@ class Lastuser(object):
         else:
             response.headers['Cache-Control'] = 'private'
         return response
+
+    def test_params(self, lastuserdata, lastusertoken):
+        if not self.test_mode:
+            return
+        else:
+            session['lastuser_userid'] = lastuserdata.get('userid')
+            self.usermanager.login_listener(
+                {'email': lastuserdata.get('email'),
+                 'fullname': lastuserdata.get('fullname'),
+                 'oldids': [],
+                 'timezone': 'Asia/Kolkata',
+                 'userid': lastuserdata.get('userid'),
+                 'username': lastuserdata.get('username') },
+                {'access_token' : lastusertoken.get('access_token'),
+                 'token_type' : lastusertoken.get('token_type'),
+                  'scope' : lastusertoken.get('scope')}
+                )
 
     def requires_login(self, f):
         """
@@ -311,6 +329,9 @@ class Lastuser(object):
     def _login_handler_internal(self, scope, next):
         if not self._redirect_uri_name:
             raise LastuserConfigException("No authorization handler defined")
+        if self.test_mode:
+          self.test_params(self.app.lastuser_auth_data, self.app.lastuser_auth_token)
+          return redirect('/')
         session['lastuser_state'] = randomstring()
         session['lastuser_redirect_uri'] = url_for(self._redirect_uri_name,
                 next=next, _external=True)
@@ -341,6 +362,7 @@ class Lastuser(object):
                 '<body>Logging you out...</body></html>' % {
                     'url': urlparse.urljoin(self.lastuser_server, self.logout_endpoint) + '?client_id=%s&next=%s'
                 % (urllib.quote(self.client_id), urllib.quote(next))})
+
         return decorated_function
 
     def auth_handler(self, f):
