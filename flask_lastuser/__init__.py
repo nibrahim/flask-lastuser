@@ -330,8 +330,12 @@ class Lastuser(object):
         if not self._redirect_uri_name:
             raise LastuserConfigException("No authorization handler defined")
         if self.test_mode:
-          self.test_params(self.app.lastuser_auth_data, self.app.lastuser_auth_token)
-          return redirect('/')
+            if hasattr(self.app, 'lastuser_auth_data') and hasattr(self.app, 'lastuser_auth_token'):
+                self.test_params(self.app.lastuser_auth_data, self.app.lastuser_auth_token)
+                return redirect(next)
+            else:
+                return self._auth_error_handler(error='bad authentication')
+
         session['lastuser_state'] = randomstring()
         session['lastuser_redirect_uri'] = url_for(self._redirect_uri_name,
                 next=next, _external=True)
